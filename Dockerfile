@@ -1,5 +1,4 @@
-FROM nginx:stable-alpine
+FROM golang:1.6-onbuild
 MAINTAINER FeelGo
 VOLUME /data
-COPY nginx.conf /etc/nginx/nginx.conf
-COPY htpasswd /usr/share/nginx/html
+EXPOSE 80
