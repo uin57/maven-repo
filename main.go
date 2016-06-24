@@ -13,7 +13,8 @@ var (
 	root = "/data"
 	mod  = map[string]string{
 		"maven":  "http://repo1.maven.org/maven2",
-		"gradle": "http://downloads.gradle.org/distributions",
+		//"gradle": "http://downloads.gradle.org/distributions",
+	    "gradle": "http://maven.oschina.net/content/groups/public",
 	}
 )
 
