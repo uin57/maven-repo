@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 )
@@ -21,7 +20,7 @@ var (
 func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Println("其他URL", r.URL.Path)
+		log.Println("unsupport URL:", r.URL.Path)
 	})
 	mux.HandleFunc("/maven/", handler)
 	mux.HandleFunc("/gradle/", handler)
@@ -36,7 +35,6 @@ func main() {
 func handler(w http.ResponseWriter, r *http.Request) {
 	uri := r.URL.Path
 	log.Println(uri)
-	isFile := false
 	proxyMod := ""
 	if strings.HasPrefix(uri, "/maven") {
 		proxyMod = "maven"
@@ -48,16 +46,9 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 	realUri := strings.TrimPrefix(uri, "/"+proxyMod)
 	filename := root + "/" + proxyMod + realUri
-	if path.Ext(realUri) != "" {
-		file, err := os.Open(filename)
-		defer file.Close()
-		if err == nil {
-			if _, err := io.Copy(w, file); err != nil {
-				w.WriteHeader(500)
-			}
-			return
-		}
-		isFile = true
+	if exist(filename) {
+		http.ServeFile(w, r, filename)
+		return
 	}
 	log.Println(mod[proxyMod] + realUri)
 	if resp, err := http.Get(mod[proxyMod] + realUri); err != nil {
@@ -66,25 +57,18 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		defer resp.Body.Close()
 		if resp.StatusCode == 200 {
-			if isFile {
+			if filepath.Ext(filename) != "" {
 				os.MkdirAll(filepath.Dir(filename), os.ModePerm)
 				tempFile := filename + ".tmp"
 				if err := writeFile(tempFile, resp.Body); err != nil {
 					io.Copy(w, resp.Body)
 				} else {
 					os.Rename(tempFile, filename)
-					f, _ := os.Open(filename)
-					defer func() {
-						f.Close()
-					}()
-					if _, err := io.Copy(w, f); err != nil {
-						w.WriteHeader(500)
-					}
+					http.ServeFile(w, r, filename)
 				}
 			} else {
 				io.Copy(w, resp.Body)
 			}
-
 		} else {
 			w.WriteHeader(resp.StatusCode)
 		}
@@ -102,14 +86,7 @@ func writeFile(file string, reader io.Reader) error {
 	}
 }
 
-func doGet(url string, writer io.Writer) (code int, bytes []byte, err error) {
-	log.Println(url)
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Panic(err)
-	}
-	code = resp.StatusCode
-	defer resp.Body.Close()
-	_, err = io.Copy(writer, resp.Body)
-	return
+func exist(filename string) bool {
+	fi, err := os.Stat(filename)
+	return err == nil || (os.IsExist(err) && !fi.IsDir())
 }
