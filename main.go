@@ -20,6 +20,9 @@ var (
 
 func main() {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("其他URL", r.URL.Path)
+	})
 	mux.HandleFunc("/maven/", handler)
 	mux.HandleFunc("/gradle/", handler)
 	log.Println("Start serving on port 80")
