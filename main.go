@@ -11,10 +11,12 @@ import (
 
 var (
 	root = "/data"
-	mod  = map[string]string{
-		//"maven":  "http://repo1.maven.org/maven2",
-		"gradle": "http://downloads.gradle.org/distributions",
-	    "maven": "http://maven.oschina.net/content/groups/public",
+	mod = map[string][]string{
+		"maven": []string{"http://maven.oschina.net/content/groups/public", "http://central.maven.org/maven2", "http://repo1.maven.org/maven2"},
+		"gradle": []string{"http://downloads.gradle.org/distributions"},
+	}
+	client = &http.Client{
+		//Timeout:time.Second * 15,
 	}
 )
 
@@ -36,52 +38,65 @@ func main() {
 func handler(w http.ResponseWriter, r *http.Request) {
 	uri := r.URL.Path
 	log.Println(uri)
-	proxyMod := ""
 	if strings.HasPrefix(uri, "/maven") {
-		proxyMod = "maven"
+		handlerM("maven", w, r)
 	} else if strings.HasPrefix(uri, "/gradle") {
-		proxyMod = "gradle"
+		handlerM("gradle", w, r)
 	} else {
 		w.WriteHeader(404)
-		return
 	}
-	realUri := strings.TrimPrefix(uri, "/"+proxyMod)
-	filename := root + "/" + proxyMod + realUri
+}
+
+func handlerM(key string, w http.ResponseWriter, r *http.Request) {
+	uri := r.URL.Path
+	realUri := strings.TrimPrefix(uri, "/" + key)
+	filename := root + "/" + key + realUri
 	if exist(filename) {
 		http.ServeFile(w, r, filename)
 		return
 	}
-	log.Println(mod[proxyMod] + realUri)
-	if resp, err := http.Get(mod[proxyMod] + realUri); err != nil {
-		w.WriteHeader(500)
-		log.Println(err)
-	} else {
-		defer resp.Body.Close()
-		if resp.StatusCode == 200 {
-			if filepath.Ext(filename) != "" {
-				os.MkdirAll(filepath.Dir(filename), os.ModePerm)
-				tempFile := filename + ".tmp"
-				if err := writeFile(tempFile, resp.Body); err != nil {
-					io.Copy(w, resp.Body)
-				} else {
-					os.Rename(tempFile, filename)
-					http.ServeFile(w, r, filename)
-				}
-			} else {
-				io.Copy(w, resp.Body)
-			}
+	lastStatusCode := 0
+	for _, base := range mod[key] {
+		GetUrl:=base + realUri;
+		log.Println(GetUrl)
+		if resp, err := client.Get(GetUrl); err != nil {
+			lastStatusCode = 500
+			log.Println(err,GetUrl)
 		} else {
-			w.WriteHeader(resp.StatusCode)
+			defer resp.Body.Close()
+			if resp.StatusCode == 200 {
+				if filepath.Ext(filename) != "" {
+					os.MkdirAll(filepath.Dir(filename), os.ModePerm)
+					tempFile := filename + ".tmp"
+					if err := writeFile(tempFile, resp.Body); err != nil {
+						io.Copy(w, resp.Body)
+						log.Fatalln(err)
+					} else {
+						os.Rename(tempFile, filename)
+						http.ServeFile(w, r, filename)
+					}
+				} else {
+					io.Copy(w, resp.Body)
+				}
+				return
+			} else {
+				lastStatusCode = resp.StatusCode
+				log.Println(resp.StatusCode, GetUrl)
+			}
 		}
 	}
+	w.WriteHeader(lastStatusCode)
 }
 
 func writeFile(file string, reader io.Reader) error {
-	if f, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666); err != nil {
+	if f, err := os.OpenFile(file, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0666); err != nil {
 		return err
 	} else {
 		defer f.Close()
-		io.Copy(f, reader)
+		if _, e := io.Copy(f, reader); e != nil {
+			log.Fatal(e)
+			return e
+		}
 		f.Sync()
 		return nil
 	}
