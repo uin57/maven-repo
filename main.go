@@ -12,7 +12,7 @@ import (
 var (
 	root = "/data"
 	mod = map[string][]string{
-		"maven": []string{"http://maven.oschina.net/content/groups/public", "http://central.maven.org/maven2", "http://repo1.maven.org/maven2"},
+		"maven": []string{"http://maven.oschina.net/content/groups/public", "http://repo1.maven.org/maven2", "http://central.maven.org/maven2"},
 		"gradle": []string{"http://downloads.gradle.org/distributions"},
 	}
 	client = &http.Client{
@@ -57,11 +57,11 @@ func handlerM(key string, w http.ResponseWriter, r *http.Request) {
 	}
 	lastStatusCode := 0
 	for _, base := range mod[key] {
-		GetUrl:=base + realUri;
+		GetUrl := base + realUri;
 		log.Println(GetUrl)
 		if resp, err := client.Get(GetUrl); err != nil {
 			lastStatusCode = 500
-			log.Println(err,GetUrl)
+			log.Println(err, GetUrl)
 		} else {
 			defer resp.Body.Close()
 			if resp.StatusCode == 200 {
