@@ -12,7 +12,7 @@ import (
 var (
 	root = "/data"
 	mod = map[string][]string{
-		"maven": []string{"http://maven.oschina.net/content/groups/public", "http://repo1.maven.org/maven2", "http://central.maven.org/maven2"},
+		"maven": []string{"http://198.199.103.234/content/groups/public","http://maven.oschina.net/content/groups/public", "http://repo1.maven.org/maven2", "http://central.maven.org/maven2"},
 		"gradle": []string{"http://downloads.gradle.org/distributions"},
 	}
 	client = &http.Client{
