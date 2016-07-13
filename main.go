@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"github.com/elazarl/goproxy"
 	"path/filepath"
 	"strings"
 )
@@ -21,14 +22,16 @@ var (
 )
 
 func main() {
+	proxy:=goproxy.NewProxyHttpServer();
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Println("unsupport URL:", r.URL.Path)
 	})
 	mux.HandleFunc("/maven/", handler)
 	mux.HandleFunc("/gradle/", handler)
+	proxy.NonproxyHandler=mux
 	log.Println("Start serving on port 80")
-	if e := http.ListenAndServe(":80", mux); e != nil {
+	if e := http.ListenAndServe(":80", proxy); e != nil {
 		log.Println(e)
 
 	}
