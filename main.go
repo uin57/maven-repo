@@ -24,9 +24,6 @@ var (
 func main() {
 	proxy:=goproxy.NewProxyHttpServer();
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Println("unsupport URL:", r.URL.Path)
-	})
 	mux.HandleFunc("/maven/", handler)
 	mux.HandleFunc("/gradle/", handler)
 	proxy.NonproxyHandler=mux
