@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"github.com/elazarl/goproxy"
 	"path/filepath"
 	"strings"
 	"encoding/base64"
@@ -15,7 +14,7 @@ import (
 var (
 	root = "/data"
 	mod = map[string][]string{
-		"maven": []string{"http://198.199.103.234/content/groups/public", "http://maven.oschina.net/content/groups/public", "http://repo1.maven.org/maven2", "http://central.maven.org/maven2"},
+		"maven": []string{"http://repo1.maven.org/maven2", "http://central.maven.org/maven2"},
 		"gradle": []string{"http://downloads.gradle.org/distributions"},
 	}
 	client = &http.Client{
@@ -23,25 +22,29 @@ var (
 	}
 	base64Coder = base64.StdEncoding
 	token string
+	inWall bool
 )
 
 func init() {
 	flag.StringVar(&token, "token", "", "密码")
 	flag.StringVar(&root, "root", "/data", "路径")
+	flag.BoolVar(&inWall, "root", "true", "路径")
 	flag.Parse()
+	token = base64Coder.EncodeToString([]byte(token))
+	if inWall {
+		mod["maven"] = append([]string{"http://maven.oschina.net/content/groups/public"}, mod["maven"]...)
+	}
 }
 
 func main() {
-	proxy := goproxy.NewProxyHttpServer();
 	mux := http.NewServeMux()
 	mux.HandleFunc("/maven/", handler)
 	mux.HandleFunc("/gradle/", handler)
 	mux.HandleFunc("/upload/", upload)
-	proxy.NonproxyHandler = mux
 	log.Println("Port: 80")
-	log.Println("Token:",token)
-	log.Println("Root:",root)
-	if e := http.ListenAndServe(":80", proxy); e != nil {
+	log.Println("Token:", token)
+	log.Println("Root:", root)
+	if e := http.ListenAndServe(":80", mux); e != nil {
 		log.Println(e)
 	}
 	os.Exit(0)
@@ -143,11 +146,8 @@ func auth(r *http.Request, token string) bool {
 		return true
 	}
 	authorization := r.Header.Get("Authorization")
-	if strings.HasPrefix(authorization, "Basic ") {
-		s := strings.TrimPrefix(authorization, "Basic ")
-		if auth, err := base64Coder.DecodeString(s); err == nil && string(auth) == token {
-			return true
-		}
+	if token == strings.TrimPrefix(authorization, "Basic ") {
+		return true
 	}
 	return false
 }
