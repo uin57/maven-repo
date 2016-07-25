@@ -28,9 +28,10 @@ var (
 func init() {
 	flag.StringVar(&token, "token", "", "密码")
 	flag.StringVar(&root, "root", "/data", "路径")
-	flag.BoolVar(&inWall, "root", true, "路径")
+	flag.BoolVar(&inWall, "wall", false, "路径")
 	flag.Parse()
 	token = base64Coder.EncodeToString([]byte(token))
+	log.Println(inWall)
 	if inWall {
 		mod["maven"] = append([]string{"http://maven.oschina.net/content/groups/public"}, mod["maven"]...)
 	}
