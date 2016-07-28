@@ -23,11 +23,13 @@ var (
 	base64Coder = base64.StdEncoding
 	token string
 	inWall bool
+	//parent string
 )
 
 func init() {
 	flag.StringVar(&token, "token", "", "密码")
 	flag.StringVar(&root, "root", "/data", "路径")
+	//flag.StringVar(&parent, "p", "", "路径")
 	flag.BoolVar(&inWall, "wall", false, "路径")
 	flag.Parse()
 	token = base64Coder.EncodeToString([]byte(token))
@@ -35,6 +37,11 @@ func init() {
 	if inWall {
 		mod["maven"] = append([]string{"http://maven.oschina.net/content/groups/public"}, mod["maven"]...)
 	}
+	//if parent != "" {
+	//	for k, v := range mod {
+	//		mod[k] = append([]string{strings.TrimSuffix(parent, "/") + "/" + k}, v...)
+	//	}
+	//}
 }
 
 func main() {
@@ -45,6 +52,7 @@ func main() {
 	log.Println("Port: 80")
 	log.Println("Token:", token)
 	log.Println("Root:", root)
+	//log.Println("Parent:", parent)
 	if e := http.ListenAndServe(":80", mux); e != nil {
 		log.Println(e)
 	}
