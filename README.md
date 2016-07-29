@@ -7,6 +7,7 @@ Maven仓库库的代理/缓存程序
 - 可以在64M内存的VPS,例如搬瓦工,virmach等,无需nexus复杂的配置
 - 支持简单上传功能,可以发布自己的jar.gradle已经测试过
 - 支持gradle-warpper缓存
+
 gradle配置
 ```groovy
     buildscript {
@@ -21,10 +22,9 @@ gradle配置
             url "http://yourHost/maven/"
         }
     }
-
 ```
 
 gradle加速需要将在gradle-wrapper.properties替换
-```properties
-distributionUrl=http://yourHost/gradle/gradle-2.xx-all.zip
-```
+ ```
+    distributionUrl=http://yourHost/gradle/gradle-2.xx-all.zip
+ ```
