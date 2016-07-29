@@ -7,41 +7,42 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"encoding/base64"
 	"flag"
+	g "github.com/hashicorp/go-getter"
+	"encoding/base64"
+	"sync"
+	"time"
+	"html/template"
+	"bytes"
 )
 
 var (
 	root = "/data"
+	token string
+	addr string
 	mod = map[string][]string{
-		"maven": []string{"http://repo1.maven.org/maven2", "http://central.maven.org/maven2"},
+		"maven": []string{"http://repo1.maven.org/maven2", "http://mirrors.ibiblio.org/pub/mirrors/maven2"},
 		"gradle": []string{"http://downloads.gradle.org/distributions"},
 	}
 	client = &http.Client{
-		//Timeout:time.Second * 15,
+		Timeout:time.Second * 15,
 	}
 	base64Coder = base64.StdEncoding
-	token string
-	inWall bool
-	//parent string
+
+	tasks = make(map[string]*handle)
+	downChan = make(chan *handle, 5)
+	lock sync.Mutex
+	errTemplate *template.Template
 )
 
 func init() {
 	flag.StringVar(&token, "token", "", "密码")
-	flag.StringVar(&root, "root", "/data", "路径")
-	//flag.StringVar(&parent, "p", "", "路径")
-	flag.BoolVar(&inWall, "wall", false, "路径")
+	flag.StringVar(&root, "root", "/data", "存储路径")
+	flag.StringVar(&addr, "addr", ":80", "监听地址")
 	flag.Parse()
 	token = base64Coder.EncodeToString([]byte(token))
-	log.Println(inWall)
-	if inWall {
-		mod["maven"] = append([]string{"http://maven.oschina.net/content/groups/public"}, mod["maven"]...)
-	}
-	//if parent != "" {
-	//	for k, v := range mod {
-	//		mod[k] = append([]string{strings.TrimSuffix(parent, "/") + "/" + k}, v...)
-	//	}
-	//}
+	tp := template.New("404 template")
+	errTemplate, _ = tp.Parse(`{{.url}}&nbsp;{{.e}}<br/>`)
 }
 
 func main() {
@@ -49,11 +50,11 @@ func main() {
 	mux.HandleFunc("/maven/", handler)
 	mux.HandleFunc("/gradle/", handler)
 	mux.HandleFunc("/upload/", upload)
-	log.Println("Port: 80")
+	log.Printf("Addr: %s \n", addr)
 	log.Println("Token:", token)
 	log.Println("Root:", root)
-	//log.Println("Parent:", parent)
-	if e := http.ListenAndServe(":80", mux); e != nil {
+	go Downloader()
+	if e := http.ListenAndServe(addr, mux); e != nil {
 		log.Println(e)
 	}
 	os.Exit(0)
@@ -80,35 +81,33 @@ func handlerM(key string, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lastStatusCode := 0
+	buffer := bytes.NewBuffer(make([]byte, 1024))
 	for _, base := range mod[key] {
 		GetUrl := base + realUri;
-		log.Println(GetUrl)
-		if resp, err := client.Get(GetUrl); err != nil {
-			lastStatusCode = 500
-			log.Println(err, GetUrl)
-		} else {
-			defer resp.Body.Close()
-			if resp.StatusCode == 200 {
-				if filepath.Ext(filename) != "" {
-					tempFile := filename + ".tmp"
-					if err := writeFile(tempFile, resp.Body); err != nil {
-						io.Copy(w, resp.Body)
-						log.Fatalln(err)
-					} else {
-						os.Rename(tempFile, filename)
-						http.ServeFile(w, r, filename)
-					}
-				} else {
-					io.Copy(w, resp.Body)
-				}
+		if filepath.Ext(filename) != "" {
+			h := download(realUri, GetUrl, filename)
+			if h.wait() {
+				http.ServeFile(w, r, filename)
 				return
+			}
+			lastStatusCode = 404
+			errTemplate.Execute(buffer, map[string]interface{}{
+				"url":GetUrl,
+				"e":h.error(),
+			})
+		} else {
+			if resp, err := client.Get(GetUrl); err != nil {
+				lastStatusCode = 500
+				log.Println(err, GetUrl)
 			} else {
-				lastStatusCode = resp.StatusCode
-				log.Println(resp.StatusCode, GetUrl)
+				lastStatusCode = 200
+				io.Copy(w, resp.Body)
+				return
 			}
 		}
 	}
 	w.WriteHeader(lastStatusCode)
+	buffer.WriteTo(w)
 }
 
 func writeFile(file string, reader io.Reader) error {
@@ -143,7 +142,7 @@ func upload(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(200)
 				return
 			} else {
-				log.Fatalln("WirteFileError:", fileErr)
+				log.Println("WirteFileError:", fileErr)
 			}
 		}
 		w.WriteHeader(403)
@@ -159,4 +158,64 @@ func auth(r *http.Request, token string) bool {
 		return true
 	}
 	return false
+}
+
+type h interface {
+	wait() bool
+	error() error
+}
+
+type handle struct {
+	c                  chan int
+	ok                 bool
+	err                error
+	key, url, savePath string
+}
+
+func (h *handle) wait() bool {
+	<-h.c
+	return h.ok
+}
+func (h *handle) error() error {
+	<-h.c
+	return h.err
+}
+
+func download(key, url, savePath string) h {
+	lock.Lock()
+	defer lock.Unlock()
+	if v, ok := tasks[key]; ok {
+		return v
+	}
+	c := make(chan int)
+	h := &handle{
+		c:c,
+		ok:true,
+		key:key,
+		url:url,
+		savePath:savePath,
+	}
+	tasks[key] = h
+	downChan <- h
+	return h
+}
+func Downloader() {
+	for {
+		select {
+		case h := <-downChan:
+			{
+				log.Printf("Downloading From: %s \n", h.url)
+				tempFile := h.savePath + ".downloading"
+				if err := g.GetFile(tempFile, h.url); err != nil {
+					h.err = err
+					h.ok = false
+				} else {
+					os.Rename(tempFile, h.savePath)
+				}
+				close(h.c)
+				delete(tasks, h.key)
+			}
+
+		}
+	}
 }
