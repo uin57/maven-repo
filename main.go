@@ -38,6 +38,7 @@ var (
 	errTemplate *template.Template
 	workers int
 	queue int
+	limitSize int
 )
 
 func init() {
@@ -46,6 +47,7 @@ func init() {
 	flag.StringVar(&addr, "addr", ":80", "监听地址")
 	flag.IntVar(&workers, "work", 10, "并发下载数")
 	flag.IntVar(&queue, "queue", 5, "同时任务数")
+	flag.IntVar(&limitSize, "limit", 20, "单线程下载最小限制")
 	flag.Parse()
 	token = base64Coder.EncodeToString([]byte(token))
 	tp := template.New("404 template")
@@ -240,7 +242,7 @@ func work(fileName, url  string, limit int) error {
 		return errors.New("response code: " + res.Status)
 	}
 	//小于20K 单线程
-	if res.ContentLength < (1024 * 20) || res.Header.Get("Accept-Ranges") != "bytes" {
+	if res.ContentLength < (1024 * limitSize) || res.Header.Get("Accept-Ranges") != "bytes" {
 		log.Println("start single Thread download ", url)
 		return g.GetFile(fileName, url)
 	}
