@@ -242,7 +242,7 @@ func work(fileName, url  string, limit int) error {
 		return errors.New("response code: " + res.Status)
 	}
 	//小于20K 单线程
-	if res.ContentLength < (1024 * limitSize) || res.Header.Get("Accept-Ranges") != "bytes" {
+	if res.ContentLength < int64(1024 * limitSize) || res.Header.Get("Accept-Ranges") != "bytes" {
 		log.Println("start single Thread download ", url)
 		return g.GetFile(fileName, url)
 	}
