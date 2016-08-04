@@ -239,8 +239,8 @@ func work(fileName, url  string, limit int) error {
 	if res.StatusCode >= 300 {
 		return errors.New("response code: " + res.Status)
 	}
-	//小于200K 单线程
-	if res.ContentLength < (1024 * 200) || res.Header.Get("Accept-Ranges") != "bytes" {
+	//小于20K 单线程
+	if res.ContentLength < (1024 * 20) || res.Header.Get("Accept-Ranges") != "bytes" {
 		log.Println("start single Thread download ", url)
 		return g.GetFile(fileName, url)
 	}
