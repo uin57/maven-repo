@@ -14,6 +14,9 @@ import (
 	"time"
 	"html/template"
 	"bytes"
+	"io/ioutil"
+	"fmt"
+	"errors"
 )
 
 var (
@@ -30,19 +33,24 @@ var (
 	base64Coder = base64.StdEncoding
 
 	tasks = make(map[string]*handle)
-	downChan = make(chan *handle, 5)
+	downChan chan *handle
 	lock sync.Mutex
 	errTemplate *template.Template
+	workers int
+	queue int
 )
 
 func init() {
 	flag.StringVar(&token, "token", "", "密码")
 	flag.StringVar(&root, "root", "/data", "存储路径")
 	flag.StringVar(&addr, "addr", ":80", "监听地址")
+	flag.IntVar(&workers, "work", 10, "并发下载数")
+	flag.IntVar(&queue, "queue", 5, "同时任务数")
 	flag.Parse()
 	token = base64Coder.EncodeToString([]byte(token))
 	tp := template.New("404 template")
 	errTemplate, _ = tp.Parse(`{{.url}}&nbsp;{{.e}}<br/>`)
+	downChan = make(chan *handle, queue)
 }
 
 func main() {
@@ -206,7 +214,7 @@ func Downloader() {
 			{
 				log.Printf("Downloading From: %s \n", h.url)
 				tempFile := h.savePath + ".downloading"
-				if err := g.GetFile(tempFile, h.url); err != nil {
+				if err := work(tempFile, h.url, workers); err != nil {
 					h.err = err
 					h.ok = false
 				} else {
@@ -218,4 +226,64 @@ func Downloader() {
 
 		}
 	}
+}
+
+func work(fileName, url  string, limit int) error {
+	res, httpHeadErr := http.Head(url); // 187 MB file of random numbers per line
+
+	if httpHeadErr != nil {
+		return httpHeadErr
+	}
+	if res.StatusCode >= 300 {
+		return errors.New("response code: " + res.Status)
+	}
+	if res.Header.Get("Accept-Ranges") != "bytes" {
+		log.Println("start single Thread download ", url)
+		return g.GetFile(fileName, url)
+	}
+	var wg sync.WaitGroup
+	targetFile, opFileErr := os.OpenFile(fileName, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0666)
+	if opFileErr != nil {
+		return opFileErr
+	}
+	defer targetFile.Close()
+	len_sub := int(res.ContentLength) / limit // Bytes for each Go-routine
+	diff := int(res.ContentLength) % limit // Get the remaining for the last request
+	allDone := true
+	worker := func(min int, max int, i int) {
+		client := &http.Client{}
+		//retry 3 times
+		for r := 0; r < 3; r++ {
+			req, respErr := http.NewRequest("GET", url, nil)
+			if respErr == nil {
+				log.Println("start download ", url, fmt.Sprintf("bytes=%d-%d", min, max))
+				req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", min, max))
+				resp, _ := client.Do(req)
+				defer resp.Body.Close()
+				reader, _ := ioutil.ReadAll(resp.Body)
+				targetFile.WriteAt(reader, int64(min))
+				break
+			} else {
+				allDone = false
+			}
+		}
+		wg.Done()
+	}
+	for i := 0; i < limit; i++ {
+		wg.Add(1)
+		min := len_sub * i // Min range
+		max := len_sub * (i + 1) // Max range
+		if (i == limit - 1) {
+			max += diff // Add the remaining bytes in the last request
+		}
+		go worker(min, max - 1, i)
+	}
+	wg.Wait()
+	targetFile.Sync()
+	if allDone {
+		return nil
+	} else {
+		return errors.New("下载失败")
+	}
+	return nil
 }
