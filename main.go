@@ -222,6 +222,7 @@ func Downloader() {
 				}
 				close(h.c)
 				delete(tasks, h.key)
+				os.Remove(tempFile)
 			}
 
 		}
@@ -234,10 +235,12 @@ func work(fileName, url  string, limit int) error {
 	if httpHeadErr != nil {
 		return httpHeadErr
 	}
+
 	if res.StatusCode >= 300 {
 		return errors.New("response code: " + res.Status)
 	}
-	if res.Header.Get("Accept-Ranges") != "bytes" {
+	//小于200K 单线程
+	if res.ContentLength < (1024 * 200) || res.Header.Get("Accept-Ranges") != "bytes" {
 		log.Println("start single Thread download ", url)
 		return g.GetFile(fileName, url)
 	}
