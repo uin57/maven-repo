@@ -116,13 +116,13 @@ func handlerM(key string, w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	log.Println(" ret ", uri, lastStatusCode)
 	w.WriteHeader(lastStatusCode)
-	buffer.WriteTo(w)
+	//buffer.WriteTo(w)
 }
 
 func writeFile(file string, reader io.Reader) error {
-	os.MkdirAll(filepath.Dir(file), os.ModePerm)
-	if f, err := os.OpenFile(file, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0666); err != nil {
+	if f, err := touchFile(file); err != nil {
 		return err
 	} else {
 		defer f.Close()
@@ -217,6 +217,7 @@ func Downloader() {
 				log.Printf("Downloading From: %s \n", h.url)
 				tempFile := h.savePath + ".downloading"
 				if err := work(tempFile, h.url, workers); err != nil {
+					log.Println("Error", h.url, err)
 					h.err = err
 					h.ok = false
 				} else {
@@ -229,6 +230,17 @@ func Downloader() {
 
 		}
 	}
+}
+
+func touchFile(fileName string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(fileName), os.ModePerm); err != nil {
+		return nil, err
+	}
+	targetFile, opFileErr := os.OpenFile(fileName, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0666)
+	if opFileErr != nil {
+		return nil, opFileErr
+	}
+	return targetFile, nil
 }
 
 func work(fileName, url  string, limit int) error {
@@ -247,7 +259,7 @@ func work(fileName, url  string, limit int) error {
 		return g.GetFile(fileName, url)
 	}
 	var wg sync.WaitGroup
-	targetFile, opFileErr := os.OpenFile(fileName, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0666)
+	targetFile, opFileErr := touchFile(fileName)
 	if opFileErr != nil {
 		return opFileErr
 	}
