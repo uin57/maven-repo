@@ -17,6 +17,7 @@ import (
 	"io/ioutil"
 	"fmt"
 	"errors"
+	"sync/atomic"
 )
 
 var (
@@ -38,7 +39,7 @@ var (
 	errTemplate *template.Template
 	workers int
 	queue int
-	limitSize int
+	blockSize = 1024 * 1024;
 )
 
 func init() {
@@ -47,7 +48,6 @@ func init() {
 	flag.StringVar(&addr, "addr", ":80", "监听地址")
 	flag.IntVar(&workers, "work", 10, "并发下载数")
 	flag.IntVar(&queue, "queue", 5, "同时任务数")
-	flag.IntVar(&limitSize, "limit", 20, "单线程下载最小限制")
 	flag.Parse()
 	token = base64Coder.EncodeToString([]byte(token))
 	tp := template.New("404 template")
@@ -214,7 +214,7 @@ func Downloader() {
 		select {
 		case h := <-downChan:
 			{
-				log.Printf("Downloading From: %s \n", h.url)
+
 				tempFile := h.savePath + ".downloading"
 				if err := work(tempFile, h.url, workers); err != nil {
 					log.Println("Error", h.url, err)
@@ -243,64 +243,87 @@ func touchFile(fileName string) (*os.File, error) {
 	return targetFile, nil
 }
 
-func work(fileName, url  string, limit int) error {
+func work(fileName, url  string, workers int) error {
 	res, httpHeadErr := http.Head(url); // 187 MB file of random numbers per line
-
 	if httpHeadErr != nil {
 		return httpHeadErr
 	}
-
+	contentLength := int(res.ContentLength)
+	log.Printf("Downloading From: %s Length: %d \n", url, contentLength)
 	if res.StatusCode >= 300 {
 		return errors.New("response code: " + res.Status)
 	}
 	//小于20K 单线程
-	if res.ContentLength < int64(1024 * limitSize) || res.Header.Get("Accept-Ranges") != "bytes" {
+	if contentLength <= blockSize || res.Header.Get("Accept-Ranges") != "bytes" {
 		log.Println("start single Thread download ", url)
 		return g.GetFile(fileName, url)
 	}
-	var wg sync.WaitGroup
 	targetFile, opFileErr := touchFile(fileName)
 	if opFileErr != nil {
 		return opFileErr
 	}
 	defer targetFile.Close()
-	len_sub := int(res.ContentLength) / limit // Bytes for each Go-routine
-	diff := int(res.ContentLength) % limit // Get the remaining for the last request
-	allDone := true
-	worker := func(min int, max int, i int) {
-		client := &http.Client{}
-		//retry 3 times
-		for r := 0; r < 3; r++ {
-			req, respErr := http.NewRequest("GET", url, nil)
-			if respErr == nil {
-				log.Println("start download ", url, fmt.Sprintf("bytes=%d-%d", min, max))
-				req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", min, max))
-				resp, _ := client.Do(req)
-				defer resp.Body.Close()
-				reader, _ := ioutil.ReadAll(resp.Body)
-				targetFile.WriteAt(reader, int64(min))
-				break
-			} else {
-				allDone = false
-			}
-		}
-		wg.Done()
+	blockCount := contentLength / blockSize
+	lastBlockSize := contentLength % blockSize
+
+	workerChan := make(chan int, workers)
+	w := worker{
+		url:url,
+		workerChan:workerChan,
+		wg:&sync.WaitGroup{},
+		targetFile:targetFile,
+		errorCount:0,
 	}
-	for i := 0; i < limit; i++ {
-		wg.Add(1)
-		min := len_sub * i // Min range
-		max := len_sub * (i + 1) // Max range
-		if (i == limit - 1) {
-			max += diff // Add the remaining bytes in the last request
+	for i := 0; i < blockCount; i++ {
+		min := blockSize * i // Min range
+		max := blockSize * (i + 1) // Max range
+		if (i == blockCount - 1) {
+			max += lastBlockSize // Add the remaining bytes in the last request
 		}
-		go worker(min, max - 1, i)
+		workerChan <- i
+		w.wg.Add(1)
+
+		if atomic.LoadInt32(&w.errorCount) == 0 {
+			go w.worker(min, max - 1, i)
+		}
 	}
-	wg.Wait()
+	w.wg.Wait()
+	close(workerChan)
 	targetFile.Sync()
-	if allDone {
+	if w.errorCount == 0 {
 		return nil
 	} else {
 		return errors.New("下载失败")
 	}
 	return nil
+}
+
+type worker struct {
+	url        string
+	workerChan <-chan int
+	wg         *sync.WaitGroup
+	targetFile *os.File
+	errorCount int32
+}
+
+func (w worker) worker(min, max, i int) {
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", w.url, nil)
+	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", min, max))
+	//retry 3 times
+	retryTime := 0
+	for ; retryTime < 3; retryTime++ {
+		if resp, err := client.Do(req); err == nil {
+			defer resp.Body.Close()
+			reader, _ := ioutil.ReadAll(resp.Body)
+			w.targetFile.WriteAt(reader, int64(min))
+			w.targetFile.Sync()
+			break
+		}
+	}
+	if retryTime != 3 {
+		atomic.AddInt32(&w.errorCount, 1)
+	}
+	w.wg.Done()
+	<-w.workerChan
 }
