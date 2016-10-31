@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"flag"
-	g "github.com/hashicorp/go-getter"
 	"encoding/base64"
 	"sync"
 	"time"
@@ -18,15 +17,28 @@ import (
 	"fmt"
 	"errors"
 	"sync/atomic"
+	"net/url"
 )
+
+type urlMeta struct {
+	url      string
+	proxyURL string
+}
 
 var (
 	root = "/data"
 	token string
 	addr string
-	mod = map[string][]string{
-		"maven": []string{"http://repo1.maven.org/maven2", "http://mirrors.ibiblio.org/pub/mirrors/maven2"},
-		"gradle": []string{"http://downloads.gradle.org/distributions"},
+	mod = map[string][]urlMeta{
+		"maven": []urlMeta{
+			urlMeta{"http://repo1.maven.org/maven2", "http://wifis:proxy@104.168.94.138:1999"},
+			urlMeta{"http://mirrors.ibiblio.org/pub/mirrors/maven2", "http://wifis:proxy@104.168.94.138:1999"},
+			urlMeta{"http://repo1.maven.org/maven2", ""},
+			urlMeta{"http://mirrors.ibiblio.org/pub/mirrors/maven2", ""},
+		},
+		"gradle": []urlMeta{
+			urlMeta{"http://downloads.gradle.org/distributions", "" },
+		},
 	}
 	client = &http.Client{
 		Timeout:time.Second * 15,
@@ -93,9 +105,9 @@ func handlerM(key string, w http.ResponseWriter, r *http.Request) {
 	lastStatusCode := 0
 	buffer := bytes.NewBuffer(make([]byte, 1024))
 	for _, base := range mod[key] {
-		GetUrl := base + realUri;
+		GetUrl := base.url + realUri;
 		if filepath.Ext(filename) != "" {
-			h := download(realUri, GetUrl, filename)
+			h := download(realUri, GetUrl, base.proxyURL, filename)
 			if h.wait() {
 				http.ServeFile(w, r, filename)
 				return
@@ -176,10 +188,10 @@ type h interface {
 }
 
 type handle struct {
-	c                  chan int
-	ok                 bool
-	err                error
-	key, url, savePath string
+	c                            chan int
+	ok                           bool
+	err                          error
+	key, url, proxyUrl, savePath string
 }
 
 func (h *handle) wait() bool {
@@ -191,7 +203,7 @@ func (h *handle) error() error {
 	return h.err
 }
 
-func download(key, url, savePath string) h {
+func download(key, url, proxyUrl, savePath string) h {
 	lock.Lock()
 	defer lock.Unlock()
 	if v, ok := tasks[key]; ok {
@@ -204,6 +216,7 @@ func download(key, url, savePath string) h {
 		key:key,
 		url:url,
 		savePath:savePath,
+		proxyUrl:proxyUrl,
 	}
 	tasks[key] = h
 	downChan <- h
@@ -216,7 +229,7 @@ func Downloader() {
 			{
 
 				tempFile := h.savePath + ".downloading"
-				if err := work(tempFile, h.url, workers); err != nil {
+				if err := work(tempFile, h.url, h.proxyUrl, workers); err != nil {
 					log.Println("Error", h.url, err)
 					h.err = err
 					h.ok = false
@@ -243,32 +256,50 @@ func touchFile(fileName string) (*os.File, error) {
 	return targetFile, nil
 }
 
-func work(fileName, url  string, workers int) error {
-	res, httpHeadErr := http.Head(url); // 187 MB file of random numbers per line
+func work(fileName, fileUrl, proxyUrl  string, workers int) error {
+	res, httpHeadErr := http.Head(fileUrl); // 187 MB file of random numbers per line
 	if httpHeadErr != nil {
 		return httpHeadErr
 	}
 	contentLength := int(res.ContentLength)
-	log.Printf("Downloading From: %s Length: %d \n", url, contentLength)
+	log.Printf("Downloading From: %s Length: %d \n", fileUrl, contentLength)
 	if res.StatusCode >= 300 {
 		return errors.New("response code: " + res.Status)
 	}
-	//小于20K 单线程
-	if contentLength <= blockSize || res.Header.Get("Accept-Ranges") != "bytes" {
-		log.Println("start single Thread download ", url)
-		return g.GetFile(fileName, url)
+	var client *http.Client
+	if (proxyUrl == "") {
+		client = &http.Client{}
+	} else {
+		//log.Println("Use Proxy", proxyUrl)
+		proxy, _ := url.Parse(proxyUrl)
+		client = &http.Client{
+			Transport: &http.Transport{
+				Proxy: http.ProxyURL(proxy),
+			},
+		}
 	}
 	targetFile, opFileErr := touchFile(fileName)
 	if opFileErr != nil {
 		return opFileErr
 	}
 	defer targetFile.Close()
+	//小于20K 单线程
+	if contentLength <= blockSize || res.Header.Get("Accept-Ranges") != "bytes" {
+		//log.Println("start single Thread download ", fileUrl)
+		var s = worker{
+			url:fileUrl,
+			client:client,
+			targetFile:targetFile,
+		}
+		return s.simpleDownload()
+	}
 	blockCount := contentLength / blockSize
 	lastBlockSize := contentLength % blockSize
 
 	workerChan := make(chan int, workers)
 	w := worker{
-		url:url,
+		url:fileUrl,
+		client:client,
 		workerChan:workerChan,
 		wg:&sync.WaitGroup{},
 		targetFile:targetFile,
@@ -304,16 +335,29 @@ type worker struct {
 	wg         *sync.WaitGroup
 	targetFile *os.File
 	errorCount int32
+	client     *http.Client
+}
+
+func (w worker) simpleDownload() error {
+	req, _ := http.NewRequest("GET", w.url, nil)
+	if resp, err := w.client.Do(req); err == nil {
+		defer resp.Body.Close()
+		bytes, _ := ioutil.ReadAll(resp.Body)
+		w.targetFile.Write(bytes)
+		w.targetFile.Sync()
+		return nil
+	} else {
+		return err
+	}
 }
 
 func (w worker) worker(min, max, i int) {
-	client := &http.Client{}
 	req, _ := http.NewRequest("GET", w.url, nil)
 	req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", min, max))
 	//retry 3 times
 	retryTime := 0
 	for ; retryTime < 3; retryTime++ {
-		if resp, err := client.Do(req); err == nil {
+		if resp, err := w.client.Do(req); err == nil {
 			defer resp.Body.Close()
 			reader, _ := ioutil.ReadAll(resp.Body)
 			w.targetFile.WriteAt(reader, int64(min))
