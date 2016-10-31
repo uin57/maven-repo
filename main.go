@@ -38,6 +38,7 @@ var (
 		},
 		"gradle": []urlMeta{
 			urlMeta{"http://downloads.gradle.org/distributions", "" },
+			urlMeta{"http://downloads.gradle.org/distributions", "http://wifis:proxy@104.168.94.138:1999" },
 		},
 	}
 	client = &http.Client{
