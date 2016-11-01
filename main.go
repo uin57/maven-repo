@@ -18,6 +18,9 @@ import (
 	"errors"
 	"sync/atomic"
 	"net/url"
+	"crypto/sha1"
+	"encoding/hex"
+	"regexp"
 )
 
 type urlMeta struct {
@@ -31,14 +34,14 @@ var (
 	addr string
 	mod = map[string][]urlMeta{
 		"maven": []urlMeta{
-			urlMeta{"http://repo1.maven.org/maven2", "http://wifis:proxy@104.168.94.138:1999"},
-			urlMeta{"http://mirrors.ibiblio.org/pub/mirrors/maven2", "http://wifis:proxy@104.168.94.138:1999"},
-			urlMeta{"http://repo1.maven.org/maven2", ""},
-			urlMeta{"http://mirrors.ibiblio.org/pub/mirrors/maven2", ""},
+			{"http://repo1.maven.org/maven2", "http://wifis:proxy@104.168.94.138:1999"},
+			{"http://mirrors.ibiblio.org/pub/mirrors/maven2", "http://wifis:proxy@104.168.94.138:1999"},
+			{"http://repo1.maven.org/maven2", ""},
+			{"http://mirrors.ibiblio.org/pub/mirrors/maven2", ""},
 		},
 		"gradle": []urlMeta{
-			urlMeta{"http://downloads.gradle.org/distributions", "" },
-			urlMeta{"http://downloads.gradle.org/distributions", "http://wifis:proxy@104.168.94.138:1999" },
+			{"http://downloads.gradle.org/distributions", "" },
+			{"http://downloads.gradle.org/distributions", "http://wifis:proxy@104.168.94.138:1999" },
 		},
 	}
 	client = &http.Client{
@@ -228,7 +231,6 @@ func Downloader() {
 		select {
 		case h := <-downChan:
 			{
-
 				tempFile := h.savePath + ".downloading"
 				if err := work(tempFile, h.url, h.proxyUrl, workers); err != nil {
 					log.Println("Error", h.url, err)
@@ -263,7 +265,6 @@ func work(fileName, fileUrl, proxyUrl  string, workers int) error {
 		return httpHeadErr
 	}
 	contentLength := int(res.ContentLength)
-	log.Printf("Downloading From: %s Length: %d \n", fileUrl, contentLength)
 	if res.StatusCode >= 300 {
 		return errors.New("response code: " + res.Status)
 	}
@@ -271,7 +272,6 @@ func work(fileName, fileUrl, proxyUrl  string, workers int) error {
 	if (proxyUrl == "") {
 		client = &http.Client{}
 	} else {
-		//log.Println("Use Proxy", proxyUrl)
 		proxy, _ := url.Parse(proxyUrl)
 		client = &http.Client{
 			Transport: &http.Transport{
@@ -280,20 +280,29 @@ func work(fileName, fileUrl, proxyUrl  string, workers int) error {
 		}
 	}
 	targetFile, opFileErr := touchFile(fileName)
+	defer targetFile.Close()
 	if opFileErr != nil {
 		return opFileErr
 	}
-	defer targetFile.Close()
 	//小于20K 单线程
 	if contentLength <= blockSize || res.Header.Get("Accept-Ranges") != "bytes" {
-		//log.Println("start single Thread download ", fileUrl)
+		log.Printf("Single Thread Downloading From: %s Length: %d proxy: %s \n", fileUrl, contentLength, proxyUrl)
 		var s = worker{
 			url:fileUrl,
 			client:client,
 			targetFile:targetFile,
 		}
-		return s.simpleDownload()
+		if e := s.simpleDownload(); e == nil {
+			if sameSha1(fileUrl, fileName) {
+				return nil
+			} else {
+				return errors.New("Sha1 check fail")
+			}
+		} else {
+			return e
+		}
 	}
+	log.Printf("Multi Thread Downloading From: %s Length: %d proxy: %s \n", fileUrl, contentLength, proxyUrl)
 	blockCount := contentLength / blockSize
 	lastBlockSize := contentLength % blockSize
 
@@ -321,8 +330,13 @@ func work(fileName, fileUrl, proxyUrl  string, workers int) error {
 	}
 	w.wg.Wait()
 	close(workerChan)
-	targetFile.Sync()
 	if w.errorCount == 0 {
+		targetFile.Sync()
+		if sameSha1(fileUrl, fileName) {
+			return nil
+		} else {
+			return errors.New("Sha1 check fail")
+		}
 		return nil
 	} else {
 		return errors.New("下载失败")
@@ -371,4 +385,24 @@ func (w worker) worker(min, max, i int) {
 	}
 	w.wg.Done()
 	<-w.workerChan
+}
+
+func sameSha1(url string, filePath string) bool {
+	if b, regErr := regexp.MatchString("\\.sha1$", url); b && regErr == nil {
+		return true
+	}
+	hash := sha1.New()
+	hash.Reset()
+	if f, fileErr := os.Open(filePath); fileErr == nil {
+		defer f.Close()
+		io.Copy(hash, f)
+		if resp, respErr := http.Get(url + ".sha1"); respErr == nil {
+			defer resp.Body.Close()
+			b, _ := ioutil.ReadAll(resp.Body)
+			hashCode := hex.EncodeToString(hash.Sum(nil))
+			serverHash := string(b)
+			return serverHash == hashCode
+		}
+	}
+	return false
 }
