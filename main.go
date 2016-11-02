@@ -1,26 +1,26 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"flag"
+	"fmt"
+	"html/template"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
-	"flag"
-	"encoding/base64"
-	"sync"
-	"time"
-	"html/template"
-	"bytes"
-	"io/ioutil"
-	"fmt"
-	"errors"
-	"sync/atomic"
-	"net/url"
-	"crypto/sha1"
-	"encoding/hex"
 	"regexp"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 type urlMeta struct {
@@ -29,11 +29,12 @@ type urlMeta struct {
 }
 
 var (
-	root = "/data"
+	root  = "/data"
 	token string
-	addr string
-	mod = map[string][]urlMeta{
+	addr  string
+	mod   = map[string][]urlMeta{
 		"maven": []urlMeta{
+			{"http://104.168.94.138/maven", ""},
 			//{"http://central.maven.org/maven2", "http://wifis:proxy@104.168.94.138:1999"},
 			{"http://central.maven.org/maven2", ""},
 			//{"http://repo1.maven.org/maven2", "http://wifis:proxy@104.168.94.138:1999"},
@@ -41,21 +42,22 @@ var (
 		},
 		"gradle": []urlMeta{
 			//{"http://downloads.gradle.org/distributions", "http://wifis:proxy@104.168.94.138:1999" },
-			{"http://downloads.gradle.org/distributions", "" },
+			{"http://104.168.94.138/gradle", ""},
+			{"http://downloads.gradle.org/distributions", ""},
 		},
 	}
 	client = &http.Client{
-		Timeout:time.Second * 15,
+		Timeout: time.Second * 15,
 	}
 	base64Coder = base64.StdEncoding
 
-	tasks = make(map[string]*handle)
-	downChan chan *handle
-	lock sync.Mutex
+	tasks       = make(map[string]*handle)
+	downChan    chan *handle
+	lock        sync.Mutex
 	errTemplate *template.Template
-	workers int
-	queue int
-	blockSize = 1024 * 1024;
+	workers     int
+	queue       int
+	blockSize   = 1024 * 1024
 )
 
 func init() {
@@ -100,7 +102,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 func handlerM(key string, w http.ResponseWriter, r *http.Request) {
 	uri := r.URL.Path
-	realUri := strings.TrimPrefix(uri, "/" + key)
+	realUri := strings.TrimPrefix(uri, "/"+key)
 	filename := root + "/" + key + realUri
 	if exist(filename) {
 		http.ServeFile(w, r, filename)
@@ -109,7 +111,7 @@ func handlerM(key string, w http.ResponseWriter, r *http.Request) {
 	lastStatusCode := 0
 	buffer := bytes.NewBuffer(make([]byte, 1024))
 	for _, base := range mod[key] {
-		GetUrl := base.url + realUri;
+		GetUrl := base.url + realUri
 		if filepath.Ext(filename) != "" {
 			h := download(realUri, GetUrl, base.proxyURL, filename)
 			if h.wait() {
@@ -118,8 +120,8 @@ func handlerM(key string, w http.ResponseWriter, r *http.Request) {
 			}
 			lastStatusCode = 404
 			errTemplate.Execute(buffer, map[string]interface{}{
-				"url":GetUrl,
-				"e":h.error(),
+				"url": GetUrl,
+				"e":   h.error(),
 			})
 		} else {
 			if resp, err := client.Get(GetUrl); err != nil {
@@ -160,11 +162,11 @@ func upload(w http.ResponseWriter, r *http.Request) {
 	realUri := strings.TrimPrefix(r.RequestURI, "/upload")
 	if "GET" == r.Method {
 		log.Println(root + "/maven" + realUri)
-		http.ServeFile(w, r, root + "/maven" + realUri)
+		http.ServeFile(w, r, root+"/maven"+realUri)
 	} else if "PUT" == r.Method {
 		if auth(r, token) {
 			defer r.Body.Close()
-			if fileErr := writeFile(root + "/maven" + realUri, r.Body); fileErr == nil {
+			if fileErr := writeFile(root+"/maven"+realUri, r.Body); fileErr == nil {
 				w.WriteHeader(200)
 				return
 			} else {
@@ -215,12 +217,12 @@ func download(key, url, proxyUrl, savePath string) h {
 	}
 	c := make(chan int)
 	h := &handle{
-		c:c,
-		ok:true,
-		key:key,
-		url:url,
-		savePath:savePath,
-		proxyUrl:proxyUrl,
+		c:        c,
+		ok:       true,
+		key:      key,
+		url:      url,
+		savePath: savePath,
+		proxyUrl: proxyUrl,
 	}
 	tasks[key] = h
 	downChan <- h
@@ -252,15 +254,15 @@ func touchFile(fileName string) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(fileName), os.ModePerm); err != nil {
 		return nil, err
 	}
-	targetFile, opFileErr := os.OpenFile(fileName, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0666)
+	targetFile, opFileErr := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 	if opFileErr != nil {
 		return nil, opFileErr
 	}
 	return targetFile, nil
 }
 
-func work(fileName, fileUrl, proxyUrl  string, workers int) error {
-	res, httpHeadErr := http.Head(fileUrl); // 187 MB file of random numbers per line
+func work(fileName, fileUrl, proxyUrl string, workers int) error {
+	res, httpHeadErr := http.Head(fileUrl) // 187 MB file of random numbers per line
 	if httpHeadErr != nil {
 		return httpHeadErr
 	}
@@ -269,7 +271,7 @@ func work(fileName, fileUrl, proxyUrl  string, workers int) error {
 		return errors.New("response code: " + res.Status)
 	}
 	var client *http.Client
-	if (proxyUrl == "") {
+	if proxyUrl == "" {
 		client = &http.Client{}
 	} else {
 		proxy, _ := url.Parse(proxyUrl)
@@ -288,9 +290,9 @@ func work(fileName, fileUrl, proxyUrl  string, workers int) error {
 	if contentLength <= blockSize || res.Header.Get("Accept-Ranges") != "bytes" {
 		log.Printf("Single Thread Downloading From: %s Length: %d proxy: %s \n", fileUrl, contentLength, proxyUrl)
 		var s = worker{
-			url:fileUrl,
-			client:client,
-			targetFile:targetFile,
+			url:        fileUrl,
+			client:     client,
+			targetFile: targetFile,
 		}
 		if e := s.simpleDownload(); e == nil {
 			if sameSha1(fileUrl, fileName) {
@@ -308,24 +310,24 @@ func work(fileName, fileUrl, proxyUrl  string, workers int) error {
 
 	workerChan := make(chan int, workers)
 	w := worker{
-		url:fileUrl,
-		client:client,
-		workerChan:workerChan,
-		wg:&sync.WaitGroup{},
-		targetFile:targetFile,
-		errorCount:0,
+		url:        fileUrl,
+		client:     client,
+		workerChan: workerChan,
+		wg:         &sync.WaitGroup{},
+		targetFile: targetFile,
+		errorCount: 0,
 	}
 	for i := 0; i < blockCount; i++ {
-		min := blockSize * i // Min range
+		min := blockSize * i       // Min range
 		max := blockSize * (i + 1) // Max range
-		if (i == blockCount - 1) {
+		if i == blockCount-1 {
 			max += lastBlockSize // Add the remaining bytes in the last request
 		}
 		workerChan <- i
 		w.wg.Add(1)
 
 		if atomic.LoadInt32(&w.errorCount) == 0 {
-			go w.worker(min, max - 1, i)
+			go w.worker(min, max-1, i)
 		}
 	}
 	w.wg.Wait()
@@ -388,6 +390,7 @@ func (w worker) worker(min, max, i int) {
 }
 
 func sameSha1(url string, filePath string) bool {
+	return true
 	if b, _ := regexp.MatchString("\\.jar", url); b {
 		hash := sha1.New()
 		hash.Reset()
@@ -400,7 +403,7 @@ func sameSha1(url string, filePath string) bool {
 				hashCode := hex.EncodeToString(hash.Sum(nil))
 				serverHash := string(b)
 				index := strings.Index(serverHash, " ")
-				if (index == -1) {
+				if index == -1 {
 					return serverHash == hashCode
 				} else {
 					return serverHash[:index] == hashCode
