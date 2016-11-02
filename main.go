@@ -90,7 +90,7 @@ func main() {
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	uri := r.URL.Path
-	log.Println(uri)
+	log.Println(r.Method, uri)
 	if strings.HasPrefix(uri, "/maven") {
 		handlerM("maven", w, r)
 	} else if strings.HasPrefix(uri, "/gradle") {
