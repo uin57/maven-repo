@@ -34,13 +34,13 @@ var (
 	addr string
 	mod = map[string][]urlMeta{
 		"maven": []urlMeta{
-			{"http://central.maven.org/maven2", "http://wifis:proxy@104.168.94.138:1999"},
+			//{"http://central.maven.org/maven2", "http://wifis:proxy@104.168.94.138:1999"},
 			{"http://central.maven.org/maven2", ""},
-			{"http://repo1.maven.org/maven2", "http://wifis:proxy@104.168.94.138:1999"},
+			//{"http://repo1.maven.org/maven2", "http://wifis:proxy@104.168.94.138:1999"},
 			{"http://repo1.maven.org/maven2", ""},
 		},
 		"gradle": []urlMeta{
-			{"http://downloads.gradle.org/distributions", "http://wifis:proxy@104.168.94.138:1999" },
+			//{"http://downloads.gradle.org/distributions", "http://wifis:proxy@104.168.94.138:1999" },
 			{"http://downloads.gradle.org/distributions", "" },
 		},
 	}
