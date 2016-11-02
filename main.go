@@ -401,7 +401,12 @@ func sameSha1(url string, filePath string) bool {
 			b, _ := ioutil.ReadAll(resp.Body)
 			hashCode := hex.EncodeToString(hash.Sum(nil))
 			serverHash := string(b)
-			return serverHash == hashCode
+			index := strings.Index(serverHash, " ")
+			if (index == -1) {
+				return serverHash == hashCode
+			} else {
+				return serverHash[:index] == hashCode
+			}
 		}
 	}
 	return false
