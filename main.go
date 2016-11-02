@@ -388,24 +388,23 @@ func (w worker) worker(min, max, i int) {
 }
 
 func sameSha1(url string, filePath string) bool {
-	if b, regErr := regexp.MatchString("\\.sha1$", url); b && regErr == nil {
-		return true
-	}
-	hash := sha1.New()
-	hash.Reset()
-	if f, fileErr := os.Open(filePath); fileErr == nil {
-		defer f.Close()
-		io.Copy(hash, f)
-		if resp, respErr := http.Get(url + ".sha1"); respErr == nil {
-			defer resp.Body.Close()
-			b, _ := ioutil.ReadAll(resp.Body)
-			hashCode := hex.EncodeToString(hash.Sum(nil))
-			serverHash := string(b)
-			index := strings.Index(serverHash, " ")
-			if (index == -1) {
-				return serverHash == hashCode
-			} else {
-				return serverHash[:index] == hashCode
+	if b, _ := regexp.MatchString("\\.jar", url); b {
+		hash := sha1.New()
+		hash.Reset()
+		if f, fileErr := os.Open(filePath); fileErr == nil {
+			defer f.Close()
+			io.Copy(hash, f)
+			if resp, respErr := http.Get(url + ".sha1"); respErr == nil {
+				defer resp.Body.Close()
+				b, _ := ioutil.ReadAll(resp.Body)
+				hashCode := hex.EncodeToString(hash.Sum(nil))
+				serverHash := string(b)
+				index := strings.Index(serverHash, " ")
+				if (index == -1) {
+					return serverHash == hashCode
+				} else {
+					return serverHash[:index] == hashCode
+				}
 			}
 		}
 	}
